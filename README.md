@@ -25,7 +25,7 @@
 3. Clone this repository or download the script:
 
    ```bash
-   git clone https://github.com/your-username/macserial-gui.git
+   git clone https://github.com/Edger1ng/macserialgui.git
    cd macserial-gui
    ```
 4. Run the application:
