@@ -304,33 +304,33 @@ class SMBIOSApp:
         frame = tk.Frame(self.root)
         frame.pack(padx=10, pady=10)
 
-        # Модель
+
         tk.Label(frame, text="Mac Model:").grid(row=0, column=0, sticky="w")
         self.model_combo = ttk.Combobox(frame, textvariable=self.model_var, state="readonly", width=25)
         self.model_combo.grid(row=0, column=1, sticky="w")
         self.model_combo.bind("<<ComboboxSelected>>", self._update_description)
 
-        # Описание модели справа
+
         tk.Label(frame, textvariable=self.description_var, fg="gray", width=40, anchor="w", justify="left").grid(row=0, column=2, padx=10, sticky="w")
 
-        # Кол-во вариантов
+
         tk.Label(frame, text="Variants count:").grid(row=1, column=0, sticky="w")
         self.count_entry = tk.Entry(frame, textvariable=self.count_var, width=5)
         self.count_entry.grid(row=1, column=1, sticky="w")
 
-        # Кнопка генерации
+
         tk.Button(frame, text="Generate SMBIOS Variants", command=self.generate).grid(row=2, column=0, columnspan=3, pady=5)
 
-        # Список вариантов
+
         self.variants_listbox = tk.Listbox(frame, height=10, width=80)
         self.variants_listbox.grid(row=3, column=0, columnspan=3, pady=5)
         self.variants_listbox.bind("<<ListboxSelect>>", self._on_variant_select)
 
-        # Окно вывода деталей
+
         self.output_text = tk.Text(self.root, height=10, width=80)
         self.output_text.pack(padx=10, pady=10)
         
-        # Кнопка вставки в config.plist (изначально выключена)
+
         self.insert_button = tk.Button(self.root, text="Insert into config.plist", command=self.insert, state="disabled")
         self.insert_button.pack(pady=(0, 10))
 
@@ -392,7 +392,7 @@ class SMBIOSApp:
         self.output_text.delete(1.0, tk.END)
         for k, v in variant.items():
             self.output_text.insert(tk.END, f"{k}: {v}\n")
-            self.insert_button.config(state="normal")  # Активируем кнопку после выбора
+            self.insert_button.config(state="normal")
 
 
     def insert(self):
