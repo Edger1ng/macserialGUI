@@ -13,12 +13,14 @@ import io
 import json
 import requests
 
+
 APP_NAME = "SMBIOS Generator GUI"
-MACSERIAL_EXEC = "macserial"
+MACSERIAL_BASENAME = "macserial"
+MACSERIAL_EXEC = MACSERIAL_BASENAME + (".exe" if platform.system() == "Windows" else "")
 GITHUB_API_RELEASES = "https://api.github.com/repos/acidanthera/OpenCorePkg/releases/latest"
 DORTANIA_MODELS_URL = "https://raw.githubusercontent.com/dortania/OpenCore-Install-Guide/master/data/platforms.json"
 DEBUG = True
-GENERATE_COUNT = 5 
+GENERATE_COUNT = 5
 
 MODEL_DESCRIPTIONS = {
     # iMac
@@ -153,87 +155,106 @@ MODEL_DESCRIPTIONS = {
     "Xserve5,1": "Mid 2012 Xserve Ivy Bridge Xeon",
 }
 
+def _print_debug(msg):
+    if DEBUG:
+        print(msg)
+
 def download_macserial_from_ocpkg():
     try:
-        response = urllib.request.urlopen(GITHUB_API_RELEASES)
-        release_info = json.loads(response.read().decode())
-        assets = release_info.get("assets", [])
+        req = urllib.request.Request(GITHUB_API_RELEASES, headers={"User-Agent": "Mozilla/5.0 (Linux; Android 7.0; SM-J530FM Build/NRD90M) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.96 Mobile Safari/537.36 YaApp_Android/10.91 YaSearchBrowser/10.91"})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            release_info = json.loads(resp.read().decode())
 
+        assets = release_info.get("assets", [])
         zip_asset = next((a for a in assets if a["name"].endswith(".zip")), None)
         if not zip_asset:
-            raise RuntimeError("No .zip asset found in OpenCorePkg release")
+            _print_debug("No .zip asset found in OpenCorePkg release")
+            return None
 
         url = zip_asset["browser_download_url"]
-        print(f"Downloading OpenCorePkg zip from {url}...")
-        with urllib.request.urlopen(url) as zipresp:
+        _print_debug(f"Downloading OpenCorePkg zip from {url}...")
+        req_zip = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Linux; Android 7.0; SM-J530FM Build/NRD90M) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.96 Mobile Safari/537.36 YaApp_Android/10.91 YaSearchBrowser/10.91"})
+        with urllib.request.urlopen(req_zip, timeout=60) as zipresp:
             with zipfile.ZipFile(io.BytesIO(zipresp.read())) as archive:
-                for name in archive.namelist():
-                    if platform.system() == "Windows" and name.endswith("macserial.exe"):
-                        outname = "macserial.exe"
-                    elif platform.system() == "Darwin" and name.endswith("macserial") and "macserial." not in name:
-                        outname = "macserial"
-                    elif platform.system() != "Windows" and platform.system() != "Darwin" and name.endswith("macserial.Linux"):
-                        outname = "macserial.Linux"
-                    else:
-                        continue
+                candidate = None
+                names = archive.namelist()
+                prefer = []
+                if platform.system() == "Windows":
+                    prefer = [n for n in names if n.endswith("/macserial.exe") or n.endswith("macserial.exe")]
+                elif platform.system() == "Darwin":
+                    prefer = [n for n in names if n.endswith("/macserial") and "macserial." not in n] or \
+                             [n for n in names if n.endswith("Utilities/macserial/macserial")]
+                else:
+                    prefer = [n for n in names if n.endswith("macserial.Linux")]
+                if prefer:
+                    candidate = prefer[0]
+                else:
+                    for n in names:
+                        base = n.split("/")[-1]
+                        if base.startswith("macserial"):
+                            candidate = n
+                            break
 
-                    print(f"Extracting {name} -> {outname}")
-                    with open(outname, "wb") as f:
-                        f.write(archive.read(name))
-                    os.chmod(outname, os.stat(outname).st_mode | stat.S_IEXEC)
-                    return outname
-        raise RuntimeError("macserial binary not found in archive")
+                if not candidate:
+                    _print_debug("macserial binary not found in archive")
+                    return None
+
+                outname = MACSERIAL_EXEC
+                _print_debug(f"Extracting {candidate} -> {outname}")
+                with open(outname, "wb") as f:
+                    f.write(archive.read(candidate))
+                os.chmod(outname, os.stat(outname).st_mode | stat.S_IEXEC)
+                return outname
     except Exception as e:
-        messagebox.showerror(APP_NAME, f"Failed to download macserial from OpenCorePkg:\n{e}")
+        _print_debug(f"Failed to download/extract macserial: {e}")
         return None
 
 def get_models_from_dortania():
     try:
-        response = requests.get(DORTANIA_MODELS_URL)
-        response.raise_for_status()
-        data = response.json()
+        r = requests.get(DORTANIA_MODELS_URL, timeout=20, headers={"User-Agent": "Mozilla/5.0 (Linux; Android 7.0; SM-J530FM Build/NRD90M) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.96 Mobile Safari/537.36 YaApp_Android/10.91 YaSearchBrowser/10.91"})
+        r.raise_for_status()
+        data = r.json()
         models = list(data.keys())
-        if DEBUG:
-            print(f"Loaded {len(models)} models from Dortania")
+        _print_debug(f"Loaded {len(models)} models from Dortania")
         return sorted(models)
     except Exception as e:
-        if DEBUG:
-            print(f"Failed to fetch models from Dortania: {e}")
-        return list(MODEL_DESCRIPTIONS.keys())
+        _print_debug(f"Failed to fetch models from Dortania: {e}")
+        return sorted(MODEL_DESCRIPTIONS.keys())
 
 def check_serial_occupied(serial):
-    """Попытка проверить, не занят ли серийник (через запрос на Apple Support)."""
     prefix = serial[:3]
     url = f"https://support-sp.apple.com/sp/product?cc={prefix}"
     try:
-        r = requests.get(url, timeout=3)
-        if r.status_code == 200 and "no info" not in r.text.lower():
-            return False 
-        else:
-            return True 
+        r = requests.get(url, timeout=5, headers={"User-Agent": "SMBIOSGen/1.0"})
+        if r.status_code == 200:
+            text = r.text.lower()
+            return "no info" not in text
+        return None
     except Exception:
-        return None 
+        return None
 
 def run_macserial_multiple(model, count=5):
-    exec_name = MACSERIAL_EXEC + (".exe" if platform.system() == "Windows" else "")
+    exec_path = Path("./" + MACSERIAL_EXEC)
+    if not exec_path.exists():
+        raise RuntimeError(f"{MACSERIAL_EXEC} is missing. Download step failed.")
+
     results = []
     for _ in range(count):
         try:
-            result = subprocess.run([f"./{exec_name}", "-m", model], capture_output=True, text=True)
+            result = subprocess.run([str(exec_path), "-m", model], capture_output=True, text=True)
             output = result.stdout.strip().splitlines()
+            if result.returncode != 0 or not output:
+                raise RuntimeError(result.stderr.strip() or "macserial returned no output")
 
-            if DEBUG:
-                print("macserial output:")
-                print("\n".join(output))
+            _print_debug("macserial output:\n" + "\n".join(output))
 
             serial = None
             board = None
             for line in output:
                 if "|" in line:
-                    parts = line.strip().split("|")
+                    parts = [p.strip() for p in line.split("|")]
                     if len(parts) >= 2:
-                        serial = parts[0].strip()
-                        board = parts[1].strip()
+                        serial, board = parts[0], parts[1]
                         break
 
             if not serial or not board:
@@ -259,8 +280,7 @@ def run_macserial_multiple(model, count=5):
                 "Occupied": occupied_str
             })
         except Exception as e:
-            messagebox.showerror("Error", f"macserial execution failed:\n{e}")
-            break
+            raise RuntimeError(f"macserial execution failed: {e}")
     return results
 
 def insert_into_config(config_path, smbios_data):
@@ -268,24 +288,20 @@ def insert_into_config(config_path, smbios_data):
         with open(config_path, "rb") as f:
             plist = plistlib.load(f)
 
-        if "PlatformInfo" not in plist:
-            plist["PlatformInfo"] = {}
-        if "Generic" not in plist["PlatformInfo"]:
-            plist["PlatformInfo"]["Generic"] = {}
-
-        generic = plist["PlatformInfo"]["Generic"]
-        generic["SystemProductName"] = smbios_data["Model"]
-        generic["SystemSerialNumber"] = smbios_data["SerialNumber"]
-        generic["MLB"] = smbios_data["BoardSerialNumber"]
-        generic["SystemUUID"] = smbios_data["SmUUID"]
-        generic["ROM"] = bytes.fromhex(smbios_data["ROM"])
+        plist.setdefault("PlatformInfo", {})
+        plist["PlatformInfo"].setdefault("Generic", {})
+        g = plist["PlatformInfo"]["Generic"]
+        g["SystemProductName"] = smbios_data["Model"]
+        g["SystemSerialNumber"] = smbios_data["SerialNumber"]
+        g["MLB"] = smbios_data["BoardSerialNumber"]
+        g["SystemUUID"] = smbios_data["SmUUID"]
+        g["ROM"] = bytes.fromhex(smbios_data["ROM"])
 
         with open(config_path, "wb") as f:
             plistlib.dump(plist, f)
-
-        messagebox.showinfo(APP_NAME, "config.plist updated successfully!")
+        return True, None
     except Exception as e:
-        messagebox.showerror("Error", f"Failed to update config.plist:\n{e}")
+        return False, str(e)
 
 class SMBIOSApp:
     def __init__(self, root):
@@ -304,36 +320,28 @@ class SMBIOSApp:
         frame = tk.Frame(self.root)
         frame.pack(padx=10, pady=10)
 
-
         tk.Label(frame, text="Mac Model:").grid(row=0, column=0, sticky="w")
         self.model_combo = ttk.Combobox(frame, textvariable=self.model_var, state="readonly", width=25)
         self.model_combo.grid(row=0, column=1, sticky="w")
         self.model_combo.bind("<<ComboboxSelected>>", self._update_description)
 
-
-        tk.Label(frame, textvariable=self.description_var, fg="gray", width=40, anchor="w", justify="left").grid(row=0, column=2, padx=10, sticky="w")
-
+        tk.Label(frame, textvariable=self.description_var, fg="gray", width=50, anchor="w", justify="left").grid(row=0, column=2, padx=10, sticky="w")
 
         tk.Label(frame, text="Variants count:").grid(row=1, column=0, sticky="w")
         self.count_entry = tk.Entry(frame, textvariable=self.count_var, width=5)
         self.count_entry.grid(row=1, column=1, sticky="w")
 
-
         tk.Button(frame, text="Generate SMBIOS Variants", command=self.generate).grid(row=2, column=0, columnspan=3, pady=5)
 
-
-        self.variants_listbox = tk.Listbox(frame, height=10, width=80)
+        self.variants_listbox = tk.Listbox(frame, height=10, width=90)
         self.variants_listbox.grid(row=3, column=0, columnspan=3, pady=5)
         self.variants_listbox.bind("<<ListboxSelect>>", self._on_variant_select)
 
-
-        self.output_text = tk.Text(self.root, height=10, width=80)
+        self.output_text = tk.Text(self.root, height=10, width=90)
         self.output_text.pack(padx=10, pady=10)
-        
 
         self.insert_button = tk.Button(self.root, text="Insert into config.plist", command=self.insert, state="disabled")
         self.insert_button.pack(pady=(0, 10))
-
 
     def generate(self):
         try:
@@ -350,7 +358,11 @@ class SMBIOSApp:
             messagebox.showwarning(APP_NAME, "Please select a Mac model.")
             return
 
-        self.variants = run_macserial_multiple(model, count)
+        try:
+            self.variants = run_macserial_multiple(model, count)
+        except Exception as e:
+            messagebox.showerror(APP_NAME, f"Generation failed:\n{e}")
+            return
 
         self.variants_listbox.delete(0, tk.END)
         for i, v in enumerate(self.variants, 1):
@@ -361,7 +373,7 @@ class SMBIOSApp:
         self.output_text.insert(tk.END, "Select a variant to see details.\n")
 
     def _populate_models(self):
-        models = sorted(MODEL_DESCRIPTIONS.keys())
+        models = get_models_from_dortania()
         self.model_combo["values"] = models
         if models:
             self.model_var.set(models[0])
@@ -371,14 +383,6 @@ class SMBIOSApp:
         model = self.model_var.get()
         desc = MODEL_DESCRIPTIONS.get(model, "No description available.")
         self.description_var.set(desc)
-
-    def _on_model_change(self, event):
-        self.clear_output_and_variants()
-
-
-
-
-
 
     def _on_variant_select(self, event):
         if not self.variants:
@@ -392,8 +396,7 @@ class SMBIOSApp:
         self.output_text.delete(1.0, tk.END)
         for k, v in variant.items():
             self.output_text.insert(tk.END, f"{k}: {v}\n")
-            self.insert_button.config(state="normal")
-
+        self.insert_button.config(state="normal")
 
     def insert(self):
         sel = self.variants_listbox.curselection()
@@ -405,21 +408,21 @@ class SMBIOSApp:
         path = filedialog.askopenfilename(title="Select config.plist", filetypes=[("Plist files", "*.plist")])
         if not path:
             return
-        insert_into_config(path, variant)
-
-    def clear_output_and_variants(self):
-        self.variants = []
-        self.variants_listbox.delete(0, tk.END)
-        self.output_text.delete(1.0, tk.END)
-        self.insert_button.config(state="disabled")
-
+        ok, err = insert_into_config(path, variant)
+        if ok:
+            messagebox.showinfo(APP_NAME, "config.plist updated successfully!")
+        else:
+            messagebox.showerror(APP_NAME, f"Failed to update config.plist:\n{err}")
 
 
 if __name__ == "__main__":
-    exec_path = MACSERIAL_EXEC + (".exe" if platform.system() == "Windows" else "")
-    if not Path(exec_path).exists():
-        if not download_macserial_from_ocpkg():
+    exec_path = Path("./" + MACSERIAL_EXEC)
+    if not exec_path.exists():
+        fetched = download_macserial_from_ocpkg()
+        if not fetched or not Path("./" + MACSERIAL_EXEC).exists():
+            print("Failed to download macserial. Check your internet and try again.")
             exit(1)
+
 
     root = tk.Tk()
     app = SMBIOSApp(root)
